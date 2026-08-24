@@ -11,23 +11,21 @@ the question, it says so instead of making something up.
 pip install -r requirements.txt
 ```
 
-The answer step uses a free LLM through an OpenAI-compatible API. Set a key for
-either Groq or Google Gemini (both have free tiers, no card needed) and the tool
-picks it up automatically:
+The answer step uses a free LLM through an OpenAI-compatible API (Groq or Google
+Gemini, both free, no card needed). Copy the example env file and add one key:
 
 ```bash
-# Groq (https://console.groq.com):
-export GROQ_API_KEY=gsk_...
-
-# or Gemini (https://aistudio.google.com/apikey):
-export GEMINI_API_KEY=...
+cp .env.example .env
 ```
 
-On Windows use `set GROQ_API_KEY=...` (cmd) or `$env:GROQ_API_KEY="..."`
-(PowerShell). If no key is set the tool still runs, but it falls back to quoting
-the best matching passage instead of calling a model (handy for checking
-retrieval without a key). Override the model with `RAG_MODEL` if you want, e.g.
-`export RAG_MODEL=llama-3.1-8b-instant`.
+Then edit `.env` and set either `GROQ_API_KEY` (from https://console.groq.com) or
+`GEMINI_API_KEY` (from https://aistudio.google.com/apikey). The tool loads `.env`
+automatically and detects which key is present.
+
+If no key is set the tool still runs, but it falls back to quoting the best
+matching passage instead of calling a model (handy for checking retrieval without
+a key). Override the model with `RAG_MODEL` if you want, e.g.
+`RAG_MODEL=llama-3.1-8b-instant`.
 
 ## Usage
 
