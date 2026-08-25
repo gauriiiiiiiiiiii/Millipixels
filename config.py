@@ -7,5 +7,6 @@ load_dotenv(override=True)
 BASE_DIR = Path(__file__).resolve().parent
 CORPUS_DIR = BASE_DIR / "corpus"
 QUESTIONS_FILE = BASE_DIR / "questions.json"
+RESULTS_FILE = BASE_DIR / "eval_results.json"
 
 TOP_K = 5

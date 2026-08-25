@@ -1,45 +1,41 @@
-import json
 import sys
 
-from config import QUESTIONS_FILE
-from qa import answer, backend_name
+import evaluate
+from qa import backend_name
 
 sys.stdout.reconfigure(encoding="utf-8")
 
 
-def main():
-    questions = json.loads(QUESTIONS_FILE.read_text(encoding="utf-8"))
+def show(row):
+    print(f"{row['id']}: {row['question']}")
+    print(f"   expected : {row['expected_answer']}")
+    print(f"   got      : {row['got']}")
+    print(
+        f"   cite     : {row['citations']}  supported={row['supported']}"
+        f"  [{row['verdict']}]"
+    )
+    print()
 
+
+def main():
     print("Answering with:", backend_name())
     print()
 
-    cited_right = 0
-    refused_right = None
+    rows = evaluate.run(on_result=show)
+    s = evaluate.summarize(rows)
 
-    for q in questions:
-        res = answer(q["question"])
-
-        if q["answerable"]:
-            ok = res["supported"] and len(res["citations"]) > 0
-            cited_right += 1 if ok else 0
-            tag = "answered" if res["supported"] else "REFUSED (should have answered)"
-        else:
-            refused_right = not res["supported"]
-            tag = "refused" if refused_right else "ANSWERED (should have refused)"
-
-        print(f"{q['id']}: {q['question']}")
-        print(f"   expected : {q['expected_answer']}")
-        print(f"   got      : {res['answer']}")
-        print(
-            f"   cite     : {res['citations']}  supported={res['supported']}  [{tag}]"
-        )
-        print()
-
-    answerable = sum(1 for q in questions if q["answerable"])
     print("-" * 60)
-    print(f"Right document cited on {cited_right}/{answerable} answerable questions")
-    if refused_right is not None:
-        print(f"Unanswerable question refused correctly: {refused_right}")
+    print(
+        f"Right document cited on {s['answerable_ok']}/{s['answerable']} "
+        "answerable questions"
+    )
+    print(
+        f"Unanswerable questions refused correctly: "
+        f"{s['unanswerable_ok']}/{s['unanswerable']}"
+    )
+
+    payload = evaluate.save(rows)
+    print(f"Saved results for the dashboard to eval_results.json ({payload['ran_at']})")
 
 
 if __name__ == "__main__":
