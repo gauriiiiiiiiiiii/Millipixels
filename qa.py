@@ -3,7 +3,7 @@ import os
 import re
 import sys
 
-from config import CORPUS_DIR
+from config import CORPUS_DIR, TOP_K
 from corpus_loader import load_chunks
 from search import Index, tokenize
 
@@ -27,22 +27,16 @@ Reply with a single JSON object and nothing else:
 {"answer": "...", "citations": ["source-name"], "supported": true or false}"""
 
 
-# pick whichever free provider has a key set (Groq or Gemini)
+GROQ_BASE_URL = "https://api.groq.com/openai/v1"
+DEFAULT_MODEL = "openai/gpt-oss-120b"
+
+
+# Groq, through its OpenAI-compatible API; None means no key, so run offline
 def _provider():
-    if os.environ.get("GROQ_API_KEY"):
-        return (
-            os.environ["GROQ_API_KEY"],
-            "https://api.groq.com/openai/v1",
-            os.environ.get("RAG_MODEL", "openai/gpt-oss-120b"),
-        )
-    key = os.environ.get("GEMINI_API_KEY") or os.environ.get("GOOGLE_API_KEY")
-    if key:
-        return (
-            key,
-            "https://generativelanguage.googleapis.com/v1beta/openai/",
-            os.environ.get("RAG_MODEL", "gemini-2.0-flash"),
-        )
-    return None
+    key = os.environ.get("GROQ_API_KEY")
+    if not key:
+        return None
+    return (key, GROQ_BASE_URL, os.environ.get("RAG_MODEL", DEFAULT_MODEL))
 
 
 def backend_name():
@@ -52,6 +46,17 @@ def backend_name():
 
 def _doc_names():
     return {p.stem for p in CORPUS_DIR.glob("*.md")}
+
+
+# models write the source as "fuel-surcharge.md" or "[source: fuel-surcharge]"
+# about as often as the bare name, so strip that down before matching
+def _clean_citation(raw):
+    name = str(raw).strip().strip("[]").strip()
+    if name.lower().startswith("source:"):
+        name = name.split(":", 1)[1].strip()
+    if name.lower().endswith(".md"):
+        name = name[:-3]
+    return name
 
 
 def _format_extracts(hits):
@@ -84,12 +89,31 @@ def _ask_model(question, hits, provider):
     except (json.JSONDecodeError, AttributeError):
         return {"answer": REFUSAL, "citations": [], "supported": False}
 
-    valid = _doc_names()
-    return {
-        "answer": str(data.get("answer", "")).strip(),
-        "citations": [c for c in data.get("citations", []) if c in valid],
-        "supported": bool(data.get("supported", False)),
-    }
+    # keep only real filenames, matched case-insensitively, and only once each
+    valid = {d.lower(): d for d in _doc_names()}
+    citations = []
+    for c in data.get("citations", []):
+        name = valid.get(_clean_citation(c).lower())
+        if name and name not in citations:
+            citations.append(name)
+
+    answer_text = str(data.get("answer", "")).strip() or REFUSAL
+    supported = bool(data.get("supported", False))
+
+    # a refusal cites nothing, there is no passage it rests on
+    if not supported:
+        return {"answer": answer_text, "citations": [], "supported": False}
+
+    # every answer must carry a citation, so if the model named a source we
+    # can't match, fall back to the retrieved document the answer overlaps most
+    if not citations:
+        citations = _infer_citation(answer_text, hits)
+        print(
+            "[warn] model gave no usable citation; inferred it from retrieval",
+            file=sys.stderr,
+        )
+
+    return {"answer": answer_text, "citations": citations, "supported": True}
 
 
 _STOP = {
@@ -124,12 +148,26 @@ _STOP = {
 }
 
 
+def _content_terms(text):
+    return {t for t in tokenize(text) if t not in _STOP and len(t) > 2}
+
+
+# the answer can only have come from the chunks we passed in, so credit the
+# retrieved document whose text shares the most words with it
+def _infer_citation(answer_text, hits):
+    if not hits:
+        return []
+    terms = _content_terms(answer_text)
+    best = max(hits, key=lambda h: len(terms & _content_terms(h["text"])))
+    return [best["doc"]]
+
+
 # fallback used when no api key is set
 def _answer_offline(question, hits):
     if not hits:
         return {"answer": REFUSAL, "citations": [], "supported": False}
 
-    q_terms = {t for t in tokenize(question) if t not in _STOP and len(t) > 2}
+    q_terms = _content_terms(question)
     top = hits[0]
     overlap = len(q_terms & set(tokenize(top["text"])))
     coverage = overlap / len(q_terms) if q_terms else 0
@@ -143,7 +181,7 @@ def _answer_offline(question, hits):
 _index = None
 
 
-def _get_index():
+def get_index():
     global _index
     if _index is None:
         _index = Index(load_chunks())
@@ -151,8 +189,8 @@ def _get_index():
 
 
 # question -> {answer, citations, supported}
-def answer(question: str) -> dict:
-    hits = _get_index().search(question)
+def answer(question: str, k: int = TOP_K) -> dict:
+    hits = get_index().search(question, k)
     provider = _provider()
     if provider:
         try:
